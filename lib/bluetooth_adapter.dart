@@ -29,7 +29,7 @@ class BluetoothAdapter {
       new StreamController.broadcast();
 
   BluetoothAdapter._() {
-    _channel.setMethodCallHandler((MethodCall call) {
+    _channel.setMethodCallHandler((MethodCall call) async {
       _methodStreamController.add(call);
     });
   }
@@ -48,20 +48,24 @@ class BluetoothAdapter {
         .map((buffer) => buffer.toString());
   }
 
-  Future<bool> get isAvailable {
-    return _channel.invokeMethod('isAvailable');
+  Future<bool> get isAvailable async {
+    final data = await _channel.invokeMethod('isAvailable');
+    return data;
   }
 
-  Future<bool> get isOn {
-    return _channel.invokeMethod('isOn');
+  Future<bool> get isOn async {
+    final data = await _channel.invokeMethod('isOn');
+    return data;
   }
 
-  Future<bool> get isConnected {
-    return _channel.invokeMethod('isConnected');
+  Future<bool> get isConnected async {
+    final data = await _channel.invokeMethod('isConnected');
+    return data;
   }
 
-  Future<bool> get openSettings {
-    return _channel.invokeMethod('openSettings');
+  Future<bool> get openSettings async {
+    final data = await _channel.invokeMethod('openSettings');
+    return data;
   }
 
   Future<List<BluetoothDevice>> getBondedDevices() async {
