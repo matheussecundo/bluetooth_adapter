@@ -1,6 +1,7 @@
 package com.example.bluetooth_adapter;
 
 import android.Manifest;
+import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
@@ -28,6 +29,9 @@ import java.util.Map;
 import java.util.UUID;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
+import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.EventChannel.StreamHandler;
 import io.flutter.plugin.common.EventChannel.EventSink;
@@ -39,7 +43,7 @@ import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.flutter.plugin.common.PluginRegistry.RequestPermissionsResultListener;
 
 /** BluetoothAdapterPlugin */
-public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler, RequestPermissionsResultListener {
+public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler, RequestPermissionsResultListener, ActivityAware {
   /// The MethodChannel that will the communication between Flutter and native
   /// Android
   ///
@@ -53,7 +57,11 @@ public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler,
   private static final int REQUEST_COARSE_LOCATION_PERMISSIONS = 1451;
   private static final UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
   private static ConnectedThread THREAD = null;
-  private final Registrar registrar;
+
+  private BinaryMessenger messenger;
+  private Activity activity;
+  private Context activeContext;
+
   private BluetoothAdapter mBluetoothAdapter;
 
   private Result pendingResult;
@@ -61,26 +69,42 @@ public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler,
   private EventSink readSink;
   private EventSink statusSink;
 
-  BluetoothAdapterPlugin(Registrar registrar) {
-    this.registrar = registrar;
-    MethodChannel channel = new MethodChannel(registrar.messenger(), NAMESPACE + "/methods");
-    EventChannel stateChannel = new EventChannel(registrar.messenger(), NAMESPACE + "/state");
-    EventChannel readChannel = new EventChannel(registrar.messenger(), NAMESPACE + "/read");
-    if (registrar.activity() != null){
-      BluetoothManager mBluetoothManager = (BluetoothManager) registrar.activity()
-              .getSystemService(Context.BLUETOOTH_SERVICE);
-      assert mBluetoothManager != null;
-      this.mBluetoothAdapter = mBluetoothManager.getAdapter();
-    }
-    channel.setMethodCallHandler(this);
-    stateChannel.setStreamHandler(stateStreamHandler);
-    readChannel.setStreamHandler(readResultsHandler);
-  }
+  public BluetoothAdapterPlugin() {}
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
-    channel = new MethodChannel(flutterPluginBinding.getFlutterEngine().getDartExecutor(), "bluetooth_adapter");
+
+    channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), "bluetooth_adapter");
     channel.setMethodCallHandler(this);
+
+    setup(flutterPluginBinding.getBinaryMessenger(), null, flutterPluginBinding.getApplicationContext());
+  }
+
+  @Override
+  public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+    channel.setMethodCallHandler(null);
+  }
+
+  @Override
+  public void onAttachedToActivity(ActivityPluginBinding binding) {
+    setActivity(binding.getActivity());
+  }
+
+  @Override
+  public void onDetachedFromActivity() {
+    this.activity = null;
+    this.mBluetoothAdapter = null;
+  }
+
+  @Override
+  public void onDetachedFromActivityForConfigChanges() {
+    this.activity = null;
+    this.mBluetoothAdapter = null;
+  }
+
+  @Override
+  public void onReattachedToActivityForConfigChanges(ActivityPluginBinding activityPluginBinding) {
+    setActivity(activityPluginBinding.getActivity());
   }
 
   // This static function is optional and equivalent to onAttachedToEngine. It
@@ -98,14 +122,37 @@ public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler,
   // be defined
   // in the same class.
   public static void registerWith(Registrar registrar) {
-    final BluetoothAdapterPlugin instance = new BluetoothAdapterPlugin(registrar);
+    final BluetoothAdapterPlugin instance = new BluetoothAdapterPlugin();
+
     final MethodChannel channel = new MethodChannel(registrar.messenger(), "bluetooth_adapter");
     channel.setMethodCallHandler(instance);
+
+    instance.setup(registrar.messenger(), registrar.activity(), registrar.activeContext());
   }
 
-  @Override
-  public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
-    channel.setMethodCallHandler(null);
+  private void setup(BinaryMessenger messenger, Activity activity, Context activeContext) {
+    this.messenger = messenger;
+    this.activeContext = activeContext;
+
+    MethodChannel channel = new MethodChannel(messenger, NAMESPACE + "/methods");
+    EventChannel stateChannel = new EventChannel(messenger, NAMESPACE + "/state");
+    EventChannel readChannel = new EventChannel(messenger, NAMESPACE + "/read");
+
+    setActivity(activity);
+
+    channel.setMethodCallHandler(this);
+    stateChannel.setStreamHandler(stateStreamHandler);
+    readChannel.setStreamHandler(readResultsHandler);
+  }
+
+  private void setActivity(Activity activity) {
+    this.activity = activity;
+    if (activity != null){
+      BluetoothManager mBluetoothManager = (BluetoothManager) activity
+              .getSystemService(Context.BLUETOOTH_SERVICE);
+      assert mBluetoothManager != null;
+      this.mBluetoothAdapter = mBluetoothManager.getAdapter();
+    }
   }
 
   @Override
@@ -138,7 +185,7 @@ public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler,
         break;
 
       case "openSettings":
-        ContextCompat.startActivity(registrar.activity(), new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS),
+        ContextCompat.startActivity(activity, new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS),
                 null);
         result.success(true);
         break;
@@ -146,10 +193,10 @@ public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler,
       case "getBondedDevices":
         try {
 
-          if (ContextCompat.checkSelfPermission(registrar.activity(),
+          if (ContextCompat.checkSelfPermission(activity,
                   Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
 
-            ActivityCompat.requestPermissions(registrar.activity(),
+            ActivityCompat.requestPermissions(activity,
                     new String[] { Manifest.permission.ACCESS_COARSE_LOCATION }, REQUEST_COARSE_LOCATION_PERMISSIONS);
 
             pendingResult = result;
@@ -400,17 +447,17 @@ public class BluetoothAdapterPlugin implements FlutterPlugin, MethodCallHandler,
     @Override
     public void onListen(Object o, EventSink eventSink) {
       statusSink = eventSink;
-      registrar.activity().registerReceiver(mReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
+      activity.registerReceiver(mReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
 
-      registrar.activeContext().registerReceiver(mReceiver, new IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED));
+      activeContext.registerReceiver(mReceiver, new IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED));
 
-      registrar.activeContext().registerReceiver(mReceiver, new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED));
+      activeContext.registerReceiver(mReceiver, new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED));
     }
 
     @Override
     public void onCancel(Object o) {
       statusSink = null;
-      registrar.activity().unregisterReceiver(mReceiver);
+      activity.unregisterReceiver(mReceiver);
     }
   };
 
